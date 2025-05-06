@@ -1,35 +1,26 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 import os
+from datetime import datetime
 
-# إعداد
-st.set_page_config(page_title="لوحة الموظف", layout="centered")
-upload_dir = "uploaded_files"
-os.makedirs(upload_dir, exist_ok=True)
+st.set_page_config(page_title="لوحة الموظف", layout="wide")
+
+st.markdown("## 👤 لوحة الموظف")
+username = st.session_state.get("username", "")
+lang = st.session_state.get("language", "العربية")
+
 excel_file = "attendance_log.xlsx"
+now = datetime.now()
+today_str = now.strftime("%Y-%m-%d")
+now_str = now.strftime("%H:%M:%S")
 
-# حماية
-if "logged_in" not in st.session_state or not st.session_state.logged_in:
-    st.warning("الرجاء تسجيل الدخول أولاً.")
-    st.stop()
-
-username = st.session_state.username
-
-# تحميل البيانات
+# تحميل ملف Excel
 if os.path.exists(excel_file):
     df = pd.read_excel(excel_file)
 else:
-    df = pd.DataFrame(columns=["اسم المستخدم", "التاريخ", "وقت الحضور", "وقت الانصراف"])
+    df = pd.DataFrame(columns=["اسم المستخدم", "التاريخ", "وقت الحضور", "وقت الانصراف", "ساعات العمل", "تأخير", "انصراف مبكر"])
 
-today_str = datetime.today().strftime("%Y-%m-%d")
-now_time = datetime.now().strftime("%H:%M:%S")
-
-# واجهة المستخدم
-st.title(f"👋 مرحباً {username}")
-st.markdown("### ✅ سجل حضورك اليوم:")
-
-# تسجيل الحضور أو الانصراف
+# عرض معلومات اليوم
 user_today = df[(df["اسم المستخدم"] == username) & (df["التاريخ"] == today_str)]
 
 if user_today.empty:
@@ -37,49 +28,86 @@ if user_today.empty:
         new_row = pd.DataFrame({
             "اسم المستخدم": [username],
             "التاريخ": [today_str],
-            "وقت الحضور": [now_time],
-            "وقت الانصراف": [None]
+            "وقت الحضور": [now_str],
+            "وقت الانصراف": [None],
+            "ساعات العمل": [None],
+            "تأخير": [None],
+            "انصراف مبكر": [None]
         })
         df = pd.concat([df, new_row], ignore_index=True)
         df.to_excel(excel_file, index=False)
-        st.success("تم تسجيل الحضور بنجاح")
+        st.success("✅ تم تسجيل الحضور")
 else:
-    if pd.isna(user_today.iloc[0]["وقت الانصراف"]):
+    row = user_today.iloc[0]
+    if pd.isna(row["وقت الانصراف"]):
         if st.button("📤 تسجيل الانصراف"):
-            df.loc[(df["اسم المستخدم"] == username) & (df["التاريخ"] == today_str), "وقت الانصراف"] = now_time
+            df.loc[(df["اسم المستخدم"] == username) & (df["التاريخ"] == today_str), "وقت الانصراف"] = now_str
+
+            # حساب الوقت
+            in_time = datetime.strptime(row["وقت الحضور"], "%H:%M:%S")
+            out_time = datetime.strptime(now_str, "%H:%M:%S")
+            work_duration = out_time - in_time
+            hours = round(work_duration.total_seconds() / 3600, 2)
+
+            # حساب التأخير والانصراف المبكر
+            expected_start = datetime.strptime("09:00:00", "%H:%M:%S")
+            expected_end = datetime.strptime("17:00:00", "%H:%M:%S")
+
+            delay = max((in_time - expected_start).total_seconds() / 60, 0)
+            early_leave = max((expected_end - out_time).total_seconds() / 60, 0)
+
+            df.loc[(df["اسم المستخدم"] == username) & (df["التاريخ"] == today_str), "ساعات العمل"] = hours
+            df.loc[(df["اسم المستخدم"] == username) & (df["التاريخ"] == today_str), "تأخير"] = round(delay, 1)
+            df.loc[(df["اسم المستخدم"] == username) & (df["التاريخ"] == today_str), "انصراف مبكر"] = round(early_leave, 1)
+
             df.to_excel(excel_file, index=False)
-            st.success("تم تسجيل الانصراف بنجاح")
+            st.success("✅ تم تسجيل الانصراف")
     else:
         st.info("✅ تم تسجيل الحضور والانصراف لهذا اليوم")
 
-# عرض بيانات المستخدم
-st.markdown("### 📊 السجلات السابقة وساعات العمل")
-user_data = df[df["اسم المستخدم"] == username].copy()
+# تعديل السجلات القديمة
+with st.expander("✏️ تعديل سجلات سابقة"):
+    user_records = df[df["اسم المستخدم"] == username]
+    edit_date = st.date_input("📅 اختر تاريخ", datetime.today())
+    edit_row = user_records[user_records["التاريخ"] == edit_date.strftime("%Y-%m-%d")]
 
-def calc_duration(row):
-    try:
-        if pd.notna(row["وقت الحضور"]) and pd.notna(row["وقت الانصراف"]):
-            in_time = datetime.strptime(str(row["وقت الحضور"]), "%H:%M:%S")
-            out_time = datetime.strptime(str(row["وقت الانصراف"]), "%H:%M:%S")
-            duration = out_time - in_time
-            return str(duration)
-    except:
-        return ""
-    return ""
+    if not edit_row.empty:
+        new_in = st.text_input("🕘 وقت الحضور الجديد", edit_row.iloc[0]["وقت الحضور"])
+        new_out = st.text_input("🕔 وقت الانصراف الجديد", edit_row.iloc[0]["وقت الانصراف"] or "")
+        if st.button("💾 حفظ التعديل"):
+            idx = df.index[(df["اسم المستخدم"] == username) & (df["التاريخ"] == edit_date.strftime("%Y-%m-%d"))][0]
+            df.at[idx, "وقت الحضور"] = new_in
+            df.at[idx, "وقت الانصراف"] = new_out
 
-user_data["ساعات العمل"] = user_data.apply(calc_duration, axis=1)
-st.dataframe(user_data)
+            # إعادة حساب
+            in_time = datetime.strptime(new_in, "%H:%M:%S")
+            out_time = datetime.strptime(new_out, "%H:%M:%S")
+            work_duration = out_time - in_time
+            hours = round(work_duration.total_seconds() / 3600, 2)
+
+            expected_start = datetime.strptime("09:00:00", "%H:%M:%S")
+            expected_end = datetime.strptime("17:00:00", "%H:%M:%S")
+
+            delay = max((in_time - expected_start).total_seconds() / 60, 0)
+            early_leave = max((expected_end - out_time).total_seconds() / 60, 0)
+
+            df.at[idx, "ساعات العمل"] = hours
+            df.at[idx, "تأخير"] = round(delay, 1)
+            df.at[idx, "انصراف مبكر"] = round(early_leave, 1)
+
+            df.to_excel(excel_file, index=False)
+            st.success("✅ تم التحديث")
 
 # رفع ملفات
-st.markdown("### 📤 رفع ملفات للمشاركة")
-uploaded_file = st.file_uploader("اختر ملفاً", type=["pdf", "docx", "xlsx", "png", "jpg", "txt"])
-if uploaded_file:
-    with open(os.path.join(upload_dir, uploaded_file.name), "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    st.success("✅ تم رفع الملف بنجاح")
+st.markdown("## 📤 رفع ملف لمشاركته")
+uploaded = st.file_uploader("اختر ملف", type=["pdf", "docx", "xlsx", "jpg", "png"])
+if uploaded:
+    with open(os.path.join("uploaded_files", uploaded.name), "wb") as f:
+        f.write(uploaded.read())
+    st.success("✅ تم رفع الملف")
 
-# عرض وتحميل الملفات
-st.markdown("### 📁 الملفات المتوفرة للتحميل")
-for file in os.listdir(upload_dir):
-    with open(os.path.join(upload_dir, file), "rb") as f:
-        st.download_button(label=f"⬇️ تحميل {file}", data=f, file_name=file)
+# عرض الملفات
+st.markdown("## 📁 ملفات مرفوعة من الجميع")
+files = os.listdir("uploaded_files")
+for file in files:
+    st.markdown(f"📎 [{file}](uploaded_files/{file})")
